@@ -28,6 +28,7 @@ local DataStorage = require("datastorage")
 local Device = require("device")
 local InfoMessage = require("ui/widget/infomessage")
 local MyClipping = require("clip")
+local LuaSettings = require("frontend/luasettings")
 local NetworkMgr = require("ui/network/manager")
 local UIManager = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
@@ -99,7 +100,11 @@ end
 
 local Exporter = WidgetContainer:extend({
 	name = "exporter",
-	clipping_dir = DataStorage:getDataDir() .. "/clipboard",
+	clipping_dir = nil,
+	-- clipping_dir = DataStorage:getDataDir() .. "/clipboard",
+	initialized = false,
+	settings = nil,
+	config_key_custom_clipping_dir = "custom_clipping_dir",
 	targets = {
 		html = require("target/html"),
 		joplin = require("target/joplin"),
@@ -146,6 +151,40 @@ function Exporter:requiresNetwork()
 			end
 		end
 	end
+end
+
+function Exporter:lazyInitialization()
+	if not self.initialized then
+		logger.dbg("Exporter: obtaining news folder")
+		self.settings = LuaSettings:open(("%s/%s"):format(DataStorage:getSettingsDir(), self.news_config_file))
+		-- Check to see if a custom download directory has been set.
+		if self.settings:has(self.config_key_custom_clipping_dir) then
+			self.clipping_dir = self.settings:readSetting(self.config_key_custom_clipping_dir)
+		else
+			self.clipping_dir = ("%s/%s/"):format(DataStorage:getFullDataDir(), self.clipping_dir_name)
+		end
+		logger.dbg("Exporter: Custom directory set to:", self.clipping_dir)
+		-- If the directory doesn't exist we will create it.
+		if not lfs.attributes(self.clipping_dir, "mode") then
+			logger.dbg("Exporter: Creating initial directory")
+			lfs.mkdir(self.clipping_dir)
+		end
+		self.initialized = true
+	end
+end
+
+function Exporter:setCustomDownloadDirectory()
+	require("ui/downloadmgr")
+		:new({
+			onConfirm = function(path)
+				logger.dbg("Exporter: set clipping directory to: ", path)
+				self.settings:saveSetting(self.config_key_custom_clipping_dir, ("%s/"):format(path))
+				self.settings:flush()
+				self.initialized = false
+				self:lazyInitialization()
+			end,
+		})
+		:chooseDir()
 end
 
 function Exporter:getDocumentClippings()
@@ -218,7 +257,20 @@ function Exporter:exportClippings(clippings)
 	end
 end
 
-function Exporter:addToMainMenu(menu_items)
+function Exporter:addToMainMenuNew(menu_items)
+	menu_items.exporter = {
+		text = _("Export highlights"),
+		sub_item_table_func = function()
+			return self:getSubMenuItems()
+		end,
+	}
+end
+
+-- function Exporter:addToMainMenu(menu_items)
+
+function Exporter:getSubMenuItems()
+	self:lazyInitialization()
+
 	local submenu = {}
 	local sharemenu = {}
 	for k, v in pairs(self.targets) do
@@ -243,32 +295,45 @@ function Exporter:addToMainMenu(menu_items)
 	table.sort(submenu, function(v1, v2)
 		return v1.text < v2.text
 	end)
-	local menu = {
-		text = _("Export highlights"),
-		sub_item_table = {
-			{
-				text = _("Export all notes in this book"),
-				enabled_func = function()
-					return self:isReadyToExport()
-				end,
-				callback = function()
-					self:exportCurrentNotes()
-				end,
-			},
-			{
-				text = _("Export all notes in your library"),
-				enabled_func = function()
-					return self:isReady()
-				end,
-				callback = function()
-					self:exportAllNotes()
-				end,
-				separator = #sharemenu == 0,
-			},
-			{
-				text = _("Choose formats and services"),
-				sub_item_table = submenu,
-				separator = true,
+
+	local sub_item_table
+	-- local menu = {
+	-- text = _("Export highlights"),
+	sub_item_table = {
+		{
+			text = _("Export all notes in this book"),
+			enabled_func = function()
+				return self:isReadyToExport()
+			end,
+			callback = function()
+				self:exportCurrentNotes()
+			end,
+		},
+		{
+			text = _("Export all notes in your library"),
+			enabled_func = function()
+				return self:isReady()
+			end,
+			callback = function()
+				self:exportAllNotes()
+			end,
+			separator = #sharemenu == 0,
+		},
+		{
+			text = _("Choose formats and services"),
+			sub_item_table = submenu,
+			separator = true,
+		},
+		{
+			text = _("Settings"),
+			sub_item_table = {
+				{
+					text = _("Set clipping folder"),
+					keep_menu_open = true,
+					callback = function()
+						self:setCustomDownloadDirectory()
+					end,
+				},
 			},
 		},
 	}
@@ -276,7 +341,7 @@ function Exporter:addToMainMenu(menu_items)
 		table.sort(sharemenu, function(v1, v2)
 			return v1.text < v2.text
 		end)
-		table.insert(menu.sub_item_table, 3, {
+		table.insert(sub_item_table, 3, {
 			text = _("Share all notes in this book"),
 			enabled_func = function()
 				return self:isDocReady()
@@ -285,7 +350,8 @@ function Exporter:addToMainMenu(menu_items)
 			separator = true,
 		})
 	end
-	menu_items.exporter = menu
+
+	return sub_item_table
 end
 
 return Exporter
