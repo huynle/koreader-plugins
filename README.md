@@ -19,4 +19,5 @@ Personalized list of koreader plugins!
 
 ## Sun 01/29/2023
 + Added ability to choose folder for Highlight Exporter, the settings should
-  persist in the `settings/exporter_settings.lua`.
+  persist in the `settings/exporter_settings.lua`. Also removed timestamp to
+  export file, would rather have it overwrite.
