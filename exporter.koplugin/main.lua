@@ -105,6 +105,7 @@ local Exporter = WidgetContainer:extend({
 	initialized = false,
 	settings = nil,
 	config_key_custom_clipping_dir = "custom_clipping_dir",
+	exporter_config_file = "exporter_settings.lua",
 	targets = {
 		html = require("target/html"),
 		joplin = require("target/joplin"),
@@ -155,13 +156,13 @@ end
 
 function Exporter:lazyInitialization()
 	if not self.initialized then
-		logger.dbg("Exporter: obtaining news folder")
-		self.settings = LuaSettings:open(("%s/%s"):format(DataStorage:getSettingsDir(), self.news_config_file))
+		logger.dbg("Exporter: obtaining clipping folder")
+		self.settings = LuaSettings:open(("%s/%s"):format(DataStorage:getSettingsDir(), self.exporter_config_file))
 		-- Check to see if a custom download directory has been set.
 		if self.settings:has(self.config_key_custom_clipping_dir) then
 			self.clipping_dir = self.settings:readSetting(self.config_key_custom_clipping_dir)
 		else
-			self.clipping_dir = ("%s/%s/"):format(DataStorage:getFullDataDir(), self.clipping_dir_name)
+			self.clipping_dir = ("%s/%s"):format(DataStorage:getFullDataDir(), self.clipping_dir_name)
 		end
 		logger.dbg("Exporter: Custom directory set to:", self.clipping_dir)
 		-- If the directory doesn't exist we will create it.
@@ -173,12 +174,12 @@ function Exporter:lazyInitialization()
 	end
 end
 
-function Exporter:setCustomDownloadDirectory()
+function Exporter:setCustomClippingDirectory()
 	require("ui/downloadmgr")
 		:new({
 			onConfirm = function(path)
 				logger.dbg("Exporter: set clipping directory to: ", path)
-				self.settings:saveSetting(self.config_key_custom_clipping_dir, ("%s/"):format(path))
+				self.settings:saveSetting(self.config_key_custom_clipping_dir, ("%s"):format(path))
 				self.settings:flush()
 				self.initialized = false
 				self:lazyInitialization()
@@ -226,6 +227,7 @@ function Exporter:exportClippings(clippings)
 			for k, v in pairs(self.targets) do
 				if v:isEnabled() then
 					v.timestamp = timestamp
+					v.clipping_dir = self.clipping_dir
 					local status = v:export(exportables)
 					if status then
 						if v.is_remote then
@@ -257,7 +259,7 @@ function Exporter:exportClippings(clippings)
 	end
 end
 
-function Exporter:addToMainMenuNew(menu_items)
+function Exporter:addToMainMenu(menu_items)
 	menu_items.exporter = {
 		text = _("Export highlights"),
 		sub_item_table_func = function()
@@ -331,7 +333,7 @@ function Exporter:getSubMenuItems()
 					text = _("Set clipping folder"),
 					keep_menu_open = true,
 					callback = function()
-						self:setCustomDownloadDirectory()
+						self:setCustomClippingDirectory()
 					end,
 				},
 			},
