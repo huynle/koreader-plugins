@@ -9,7 +9,10 @@ Personalized list of koreader plugins!
 
 
 # Projects
-+ Persist exporter configurations
++ [ ]: Write Syncthing plugin
+  + Allow GUI web browser setup of syncthing
+  + When start Syncthing, request network to start
++ [ ]: Persist exporter configurations
 
 ---
 # Logs

@@ -101,7 +101,6 @@ end
 local Exporter = WidgetContainer:extend({
 	name = "exporter",
 	clipping_dir = nil,
-	-- clipping_dir = DataStorage:getDataDir() .. "/clipboard",
 	initialized = false,
 	settings = nil,
 	config_key_custom_clipping_dir = "custom_clipping_dir",
