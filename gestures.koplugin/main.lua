@@ -259,8 +259,6 @@ function Gestures:genSubItem(ges, separator, hold_callback)
         separator = separator,
         hold_callback = hold_callback,
         menu_item_id = ges,
-        ignored_by_menu_search = true, -- This item is not strictly duplicated, but its subitems are.
-                                       -- Ignoring it speeds up search.
     }
 end
 

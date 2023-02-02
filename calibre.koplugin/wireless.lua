@@ -111,7 +111,7 @@ function CalibreWireless:find_calibre_server()
             if dgram and host then
                 -- replied diagram has greet message from calibre and calibre hostname
                 -- calibre opds port and calibre socket port we will later connect to
-                local _, _, replied_port = dgram:match("calibre wireless device client %(on (.-)%);(%d+),(%d+)$")
+                local _, _, _, replied_port = dgram:match("(.-)%(on (.-)%);(.-),(.-)$")
                 return host, replied_port
             end
         end
@@ -122,13 +122,13 @@ function CalibreWireless:checkCalibreServer(host, port)
     local socket = require("socket")
     local tcp = socket.tcp()
     tcp:settimeout(5)
+    local client = tcp:connect(host, port)
     -- In case of error, the method returns nil followed by a string describing the error. In case of success, the method returns 1.
-    local ok, err = tcp:connect(host, port)
-    if ok then
+    if client then
         tcp:close()
         return true
     end
-    return false, err
+    return false
 end
 
 -- Standard JSON/control opcodes receive callback
@@ -146,15 +146,12 @@ function CalibreWireless:JSONReceiveCallback(host, port)
                     msg = _("Invalid password")
                     this.invalid_password = nil
                     this:disconnect()
-                    logger.warn("invalid password, disconnecting")
                 elseif this.disconnected_by_server then
                     msg = _("Disconnected by calibre")
                     this.disconnected_by_server = nil
-                    logger.info("disconnected by calibre")
                 else
                     msg = T(_("Connected to calibre server at %1"),
                         BD.ltr(T("%1:%2", this.calibre_socket.host, this.calibre_socket.port)))
-                    logger.info("connected successfully")
                 end
                 UIManager:show(InfoMessage:new{
                     text = msg,
@@ -163,6 +160,10 @@ function CalibreWireless:JSONReceiveCallback(host, port)
             end
             this.connect_message = true
             UIManager:scheduleIn(1, this.password_check_callback)
+            if this.failed_connect_callback then
+                -- Don't disconnect if we connect in 10 seconds
+                UIManager:unschedule(this.failed_connect_callback)
+            end
         end
     end
 end
@@ -178,7 +179,7 @@ function CalibreWireless:initCalibreMQ(host, port)
         self.calibre_socket:start()
         self.calibre_messagequeue = UIManager:insertZMQ(self.calibre_socket)
     end
-    logger.info(string.format("connecting to calibre @ %s:%s", host, port))
+    logger.info("connected to calibre", host, port)
 end
 
 -- will callback initCalibreMQ if inbox is confirmed to be set
@@ -233,36 +234,26 @@ function CalibreWireless:connect()
     end
 
     self.connect_message = false
-    local address_type, host, port, ok, err
+    local host, port
     if G_reader_settings:hasNot("calibre_wireless_url") then
         host, port = self:find_calibre_server()
-        if host and port then
-            address_type = "discovered"
-        else
-            ok = false
-            err = _("Couldn't discover a calibre instance on the local network")
-            address_type = "unavailable"
-        end
     else
         local calibre_url = G_reader_settings:readSetting("calibre_wireless_url")
         host, port = calibre_url["address"], calibre_url["port"]
-        address_type = "specified"
+        if not self:checkCalibreServer(host, port) then
+            host = nil
+        else
+            self.failed_connect_callback = function()
+                UIManager:show(InfoMessage:new{
+                    text = _("Cannot connect to calibre server."),
+                })
+                self:disconnect()
+            end
+            -- wait 10 seconds to connect to calibre
+            UIManager:scheduleIn(10, self.failed_connect_callback)
+        end
     end
-
     if host and port then
-        ok, err = self:checkCalibreServer(host, port)
-    end
-
-    if not ok then
-        host = host or "????"
-        port = port or "??"
-        err = err or _("N/A")
-        logger.warn(string.format("Cannot connect to %s calibre server at %s:%s (%s)", address_type, host, port, err))
-        UIManager:show(InfoMessage:new{
-            text = T(_("Cannot connect to calibre server at %1 (%2)"),
-                        BD.ltr(T("%1:%2", host, port)), err)
-        })
-    else
         local inbox_dir = G_reader_settings:readSetting("inbox_dir")
         if inbox_dir then
             CalibreMetadata:init(inbox_dir)
@@ -270,11 +261,17 @@ function CalibreWireless:connect()
         else
             self:setInboxDir(host, port)
         end
+    else
+        logger.info("cannot connect to calibre server")
+        UIManager:show(InfoMessage:new{
+            text = _("Cannot connect to calibre server."),
+        })
+        return
     end
 end
 
 function CalibreWireless:disconnect()
-    logger.info("disconnecting from calibre")
+    logger.info("disconnect from calibre")
     self.connect_message = false
     if self.calibre_socket then
         self.calibre_socket:stop()

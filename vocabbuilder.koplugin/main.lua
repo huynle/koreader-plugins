@@ -26,9 +26,7 @@ local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
 local IconButton = require("ui/widget/iconbutton")
 local IconWidget = require("ui/widget/iconwidget")
-local InfoMessage = require("ui/widget/infomessage")
 local InputContainer = require("ui/widget/container/inputcontainer")
-local InputDialog = require("ui/widget/inputdialog")
 local LeftContainer = require("ui/widget/container/leftcontainer")
 local LineWidget = require("ui/widget/linewidget")
 local MovableContainer = require("ui/widget/container/movablecontainer")
@@ -56,8 +54,8 @@ local word_face = Font:getFace("x_smallinfofont")
 local subtitle_face = Font:getFace("cfont", 12)
 local subtitle_italic_face = Font:getFace("NotoSans-Italic.ttf", 12)
 local subtitle_color = Blitbuffer.COLOR_DARK_GRAY
-local dim_color = Blitbuffer.COLOR_GRAY_3
-local settings = G_reader_settings:readSetting("vocabulary_builder", {enabled = false, with_context = true})
+local dim_color = Blitbuffer.Color8(0x22)
+local settings = G_reader_settings:readSetting("vocabulary_builder", {enabled = true})
 
 local function resetButtonOnLookupWindow()
     if not settings.enabled then -- auto add words
@@ -314,20 +312,12 @@ function MenuDialog:init()
             show_sync_settings()
         end
     }
-    local search_button = {
-        text = _("Search"),
-        callback = function()
-            UIManager:close(self)
-            self.show_parent:showSearchDialog()
-        end
-    }
 
     local buttons = ButtonTable:new{
         width = width,
         buttons = {
             {reverse_button},
             {sync_button},
-            {search_button},
             {filter_button, edit_button},
             {reset_button, clean_button},
         },
@@ -948,7 +938,6 @@ function VocabItemWidget:resetProgress()
     self.item.due_time = os.time()
     self.item.review_time = self.item.due_time
     self.item.last_due_time = nil
-    self.item.is_dim = false
     self:initItemWidget()
     UIManager:setDirty(self.show_parent, function()
         return "ui", self[1].dimen end)
@@ -963,7 +952,6 @@ function VocabItemWidget:undo()
     self.item.last_review_count = nil
     self.item.last_review_time = nil
     self.item.last_due_time = nil
-    self.item.is_dim = false
     self:initItemWidget()
     UIManager:setDirty(self.show_parent, function()
         return "ui", self[1].dimen end)
@@ -1098,7 +1086,7 @@ function VocabItemWidget:onShowBookAssignment(title_changed_cb)
         face = Font:getFace("smallinfofontbold"),
         callback = function()
             local dialog
-            dialog = InputDialog:new{
+            dialog = require("ui/widget/inputdialog"):new{
                 title = _("Enter book title:"),
                 input = "",
                 input_type = "text",
@@ -1214,104 +1202,13 @@ function VocabularyBuilderWidget:init()
             }
         }
     end
-    self.page_info = HorizontalGroup:new{}
-    self:refreshFooter()
-
-    local bottom_line = LineWidget:new{
-        dimen = Geom:new{ w = self.item_width, h = Size.line.thick },
-        background = Blitbuffer.COLOR_LIGHT_GRAY,
-    }
-    local vertical_footer = VerticalGroup:new{
-        bottom_line,
-        self.page_info,
-    }
-    self.footer_height = vertical_footer:getSize().h
-    local footer = BottomContainer:new{
-        dimen = self.dimen:copy(),
-        vertical_footer,
-    }
-    -- setup title bar
-    self.title_bar = TitleBar:new{
-        width = self.dimen.w,
-        align = "center",
-        title_face = Font:getFace("smallinfofontbold"),
-        bottom_line_color = Blitbuffer.COLOR_LIGHT_GRAY,
-        with_bottom_line = true,
-        bottom_line_h_padding = Size.padding.large,
-        left_icon = "appbar.menu",
-        left_icon_tap_callback = function() self:showMenu() end,
-        title = self.title,
-        close_callback = function() self:onClose() end,
-        show_parent = self,
-    }
-
-    self:setupItemHeight()
-    self.main_content = VerticalGroup:new{}
-
-    -- calculate item's review button width once
-    local temp_button = Button:new{
-        text = _("Got it"),
-        padding_h = Size.padding.large
-    }
-    self.review_button_width = temp_button:getSize().w
-    temp_button:setText(_("Forgot"))
-    self.review_button_width = math.min(math.max(self.review_button_width, temp_button:getSize().w), Screen:getWidth()/4)
-    temp_button:free()
-
-    self:_populateItems()
-
-    local frame_content = FrameContainer:new{
-        height = self.dimen.h,
-        padding = 0,
-        bordersize = 0,
-        background = Blitbuffer.COLOR_WHITE,
-        VerticalGroup:new{
-            self.title_bar,
-            self.main_content,
-        },
-    }
-    local content = OverlapGroup:new{
-        dimen = self.dimen:copy(),
-        frame_content,
-        footer,
-    }
-    -- assemble page
-    self[1] = FrameContainer:new{
-        height = self.dimen.h,
-        padding = 0,
-        bordersize = 0,
-        background = Blitbuffer.COLOR_WHITE,
-        content
-    }
-end
-
-function VocabularyBuilderWidget:refreshFooter()
-    local has_sync = settings.server ~= nil
-    local has_search = self.search_text_sql
-    if self.footer_left ~= nil then -- check whether refresh needed
-        local should_refresh = has_sync and self.page_info[1] ~= self.footer_sync
-                               or not has_sync and self.page_info[1] == self.footer_sync
-        if not should_refresh then
-            should_refresh = has_search and self.page_info[#self.page_info] ~= self.footer_search
-                             or not has_search and self.page_info[#self.page_info] == self.footer_search
-        end
-        if not should_refresh then return end
-    end
-
-    self.page_info:clear()
     local padding = Size.padding.large
     self.width_widget = self.dimen.w - 2 * padding
     self.item_width = self.dimen.w - 2 * padding
     self.footer_center_width = math.floor(self.width_widget * (32/100))
     self.footer_button_width = math.floor(self.width_widget * (12/100))
-    local left_ratio = 10
-    local right_ratio = 10
-    if has_sync and not has_search then
-        left_ratio = 9
-        right_ratio = 11
-    end
-    self.footer_left_corner_width = math.floor(self.width_widget * left_ratio/100)
-    self.footer_right_corner_width = math.floor(self.width_widget * right_ratio/100)
+    self.footer_left_corner_width = math.floor(self.width_widget * (8/100))
+    self.footer_right_corner_width = math.floor(self.width_widget * (12/100))
     -- group for footer
     local chevron_left = "chevron.left"
     local chevron_right = "chevron.right"
@@ -1357,18 +1254,14 @@ function VocabularyBuilderWidget:refreshFooter()
         radius = 0,
         show_parent = self,
     }
-    local footer_height = self.footer_last_down:getSize().h
-    local sync_size = TextWidget:getFontSizeToFitHeight("cfont", footer_height, Size.padding.buttontable*2)
+
     self.footer_sync = Button:new{
         text = "⇅",
-        width = self.footer_left_corner_width - Size.padding.large * 2,
-        text_font_size = sync_size,
-        text_font_bold = false,
+        width = self.footer_left_corner_width,
+        text_font_size = 18,
         bordersize = 0,
         radius = 0,
-        padding_h = Size.padding.large,
-        padding_v = Size.padding.button,
-        margin = 0,
+        padding = Size.padding.large,
         show_parent = self,
         callback = function()
             if not settings.server then
@@ -1396,18 +1289,6 @@ function VocabularyBuilderWidget:refreshFooter()
     }
     self.footer_sync.label_widget.fgcolor = Blitbuffer.COLOR_GRAY_3
 
-    self.footer_search = Button:new{
-        icon = "appbar.search",
-        width = self.footer_right_corner_width,
-        icon_width = math.floor(footer_height - Size.padding.large),
-        icon_height = math.floor(footer_height - Size.padding.large),
-        callback = function()
-            self:showSearchDialog()
-        end,
-        bordersize = 0,
-        radius = 0,
-        show_parent = self,
-    }
     self.footer_page = Button:new{
         text = "",
         hold_input = {
@@ -1433,61 +1314,82 @@ function VocabularyBuilderWidget:refreshFooter()
         width = self.footer_center_width,
         show_parent = self,
     }
-    table.insert(self.page_info, has_sync and self.footer_sync or HorizontalSpan:new{width=self.footer_left_corner_width})
-    table.insert(self.page_info, self.footer_first_up)
-    table.insert(self.page_info, self.footer_left)
-    table.insert(self.page_info, self.footer_page)
-    table.insert(self.page_info, self.footer_right)
-    table.insert(self.page_info, self.footer_last_down)
-    table.insert(self.page_info, has_search and self.footer_search or HorizontalSpan:new{ width = self.footer_right_corner_width })
-end
+    self.page_info = HorizontalGroup:new{
+        self.footer_sync,
+        self.footer_first_up,
+        self.footer_left,
+        self.footer_page,
+        self.footer_right,
+        self.footer_last_down,
+        HorizontalSpan:new{ width = self.footer_right_corner_width }
+    }
 
-function VocabularyBuilderWidget:showSearchDialog()
-    local dialog
-    dialog = InputDialog:new{
-        title = _("Search words"),
-        input = self.search_text or "",
-        input_hint = _("Search empty content to exit"),
-        input_type = "text",
-        buttons = {
-            {
-                {
-                    text = _("Cancel"),
-                    callback = function()
-                        UIManager:close(dialog)
-                    end,
-                },
-                {
-                    text = _("Info"),
-                    callback = function()
-                        local text_info = _([[You can use two wildcards when searching: the percent sign (%) and the underscore (_).
-% represents any zero or more number of characters and _ represents any single character.
+    local bottom_line = LineWidget:new{
+        dimen = Geom:new{ w = self.item_width, h = Size.line.thick },
+        background = Blitbuffer.COLOR_LIGHT_GRAY,
+    }
+    local vertical_footer = VerticalGroup:new{
+        bottom_line,
+        self.page_info,
+    }
+    self.footer_height = vertical_footer:getSize().h
+    local footer = BottomContainer:new{
+        dimen = self.dimen:copy(),
+        vertical_footer,
+    }
+    -- setup title bar
+    self.title_bar = TitleBar:new{
+        width = self.dimen.w,
+        align = "center",
+        title_face = Font:getFace("smallinfofontbold"),
+        bottom_line_color = Blitbuffer.COLOR_LIGHT_GRAY,
+        with_bottom_line = true,
+        bottom_line_h_padding = padding,
+        left_icon = "appbar.menu",
+        left_icon_tap_callback = function() self:showMenu() end,
+        title = self.title,
+        close_callback = function() self:onClose() end,
+        show_parent = self,
+    }
 
-If no wildcard is used, the searched text will be enclosed with two %'s by default.]])
-                        UIManager:show(InfoMessage:new{ text = text_info })
-                    end,
-                },
-                {
-                    text = _("Search"),
-                    is_enter_default = true,
-                    callback = function()
-                        self.search_text = dialog:getInputText()
-                        if self.search_text == "" then
-                            self.search_text_sql = nil
-                        elseif self.search_text:find("%", 1, true) or self.search_text:find("_") then
-                            self.search_text_sql = self.search_text:gsub("'", "''")
-                        else
-                            self.search_text_sql = "%" .. self.search_text:gsub("'", "''") .. "%"
-                        end
-                        UIManager:close(dialog)
-                        self:reloadItems()
-                    end,
-                },
-            }
+    self:setupItemHeight()
+    self.main_content = VerticalGroup:new{}
+
+    -- calculate item's review button width once
+    local temp_button = Button:new{
+        text = _("Got it"),
+        padding_h = Size.padding.large
+    }
+    self.review_button_width = temp_button:getSize().w
+    temp_button:setText(_("Forgot"))
+    self.review_button_width = math.min(math.max(self.review_button_width, temp_button:getSize().w), Screen:getWidth()/4)
+    temp_button:free()
+
+    self:_populateItems()
+
+    local frame_content = FrameContainer:new{
+        height = self.dimen.h,
+        padding = 0,
+        bordersize = 0,
+        background = Blitbuffer.COLOR_WHITE,
+        VerticalGroup:new{
+            self.title_bar,
+            self.main_content,
         },
     }
-    UIManager:show(dialog)
-    dialog:onShowKeyboard()
+    local content = OverlapGroup:new{
+        dimen = self.dimen:copy(),
+        frame_content,
+        footer,
+    }
+    -- assemble page
+    self[1] = FrameContainer:new{
+        height = self.dimen.h,
+        padding = 0,
+        bordersize = 0,
+        background = Blitbuffer.COLOR_WHITE,
+        content
+    }
 end
 
 function VocabularyBuilderWidget:setupItemHeight()
@@ -1568,10 +1470,7 @@ function VocabularyBuilderWidget:_populateItems()
             item
         )
     end
-    self:refreshFooter()
-    if settings.server then
-        table.insert(self.layout, #self.layout, {self.footer_sync})
-    end
+    table.insert(self.layout, #self.layout, {self.footer_sync})
     if #self.main_content == 0 then
         table.insert(self.main_content, HorizontalSpan:new{width = self.item_width})
     end
@@ -1582,14 +1481,9 @@ function VocabularyBuilderWidget:_populateItems()
         self.footer_page:disableWithoutDimming()
     end
     if self.pages == 0 then
-        local text
-        if self.search_text_sql then
-            text = _("Search in effect")
-        else
-            local has_filtered_book = DB:hasFilteredBook()
-            text = has_filtered_book and _("Filter in effect") or
-                self:check_reverse() and _("No reviewable items") or _("No items")
-        end
+        local has_filtered_book = DB:hasFilteredBook()
+        local text = has_filtered_book and _("Filter in effect") or
+            self:check_reverse() and _("No reviewable items") or _("No items")
         self.footer_page:setText(text, self.footer_center_width)
         self.footer_first_up:hide()
         self.footer_last_down:hide()
@@ -1718,7 +1612,7 @@ end
 
 function VocabularyBuilderWidget:showChangeBookTitleDialog(sort_item, onSuccess)
     local dialog
-    dialog = InputDialog:new {
+    dialog = require("ui/widget/inputdialog"):new {
         title = _("Change book title to:"),
         input = sort_item.text,
         input_type = "text",
@@ -1806,24 +1700,10 @@ function VocabularyBuilderWidget:onSwipe(arg, ges_ev)
 end
 
 function VocabularyBuilderWidget:onMultiSwipe(arg, ges_ev)
-    -- if user is drawing a circle or half circle (full circle not always easy), reload
-    local space_count = 0
-    for space in ges_ev.multiswipe_directions:gmatch(" ") do
-        space_count = space_count + 1
-        if space_count == 2 then break end
-    end
-    if space_count == 2 and (
-        string.find("east south west north east south west", ges_ev.multiswipe_directions)
-        or string.find("east north west south east north west", ges_ev.multiswipe_directions)
-    ) then
-        self:reloadItems()
-        UIManager:show(Notification:new{ text = _("Words reloaded") })
-    else
-        -- For consistency with other fullscreen widgets where swipe south can't be
-        -- used to close and where we then allow any multiswipe to close, allow any
-        -- multiswipe to close this widget too.
-        self:onClose()
-    end
+    -- For consistency with other fullscreen widgets where swipe south can't be
+    -- used to close and where we then allow any multiswipe to close, allow any
+    -- multiswipe to close this widget too.
+    self:onClose()
     return true
 end
 
