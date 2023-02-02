@@ -41,13 +41,8 @@ end
 
 function VocabularyBuilder:selectCount(vocab_widget)
     local db_conn = SQ3.open(db_location)
-    local sql
-    if vocab_widget.search_text_sql then
-        sql = "SELECT count(0) FROM vocabulary WHERE word LIKE '" .. vocab_widget.search_text_sql .. "'"
-    else
-        local where_clause = vocab_widget:check_reverse() and " WHERE due_time <= " .. vocab_widget.reload_time or ""
-        sql = "SELECT count(0) FROM vocabulary INNER JOIN title ON filter=true AND title_id=id" .. where_clause .. ";"
-    end
+    local where_clause = vocab_widget:check_reverse() and " WHERE due_time <= " .. vocab_widget.reload_time or ""
+    local sql = "SELECT count(0) FROM vocabulary INNER JOIN title ON filter=true AND title_id=id" .. where_clause .. ";"
     local count = tonumber(db_conn:rowexec(sql))
     db_conn:close()
     return count
@@ -143,12 +138,10 @@ function VocabularyBuilder:insertLookupData(db_conn)
     end
 end
 
-function VocabularyBuilder:_select_items(items, start_idx, reload_time, search_text)
+function VocabularyBuilder:_select_items(items, start_idx, reload_time)
     local conn = SQ3.open(db_location)
     local sql
-    if search_text then
-        sql = string.format("SELECT * FROM vocabulary INNER JOIN title ON title_id = title.id WHERE word LIKE '%s' LIMIT 32 OFFSET %d", search_text, start_idx-1)
-    elseif not reload_time then
+    if not reload_time then
         sql = string.format("SELECT * FROM vocabulary INNER JOIN title ON title_id = title.id AND filter = true ORDER BY due_time limit %d OFFSET %d;", 32, start_idx-1)
     else
         sql = string.format([[SELECT * FROM vocabulary INNER JOIN title
@@ -206,7 +199,7 @@ function VocabularyBuilder:select_items(vocab_widget, start_idx, end_idx)
     end
 
     if not start_cursor then return end
-    self:_select_items(items, start_cursor, vocab_widget:check_reverse() and vocab_widget.reload_time, vocab_widget.search_text_sql)
+    self:_select_items(items, start_cursor, vocab_widget:check_reverse() and vocab_widget.reload_time)
 end
 
 
@@ -436,7 +429,7 @@ function VocabularyBuilder.onSync(local_path, cached_path, income_path)
     sql = sql .. [[
         -- We merge the local db with income db to form the synced db.
         -- First we do the books
-        INSERT INTO title (name) SELECT name FROM income_db.title WHERE name NOT IN (SELECT name FROM title);
+        INSERT OR IGNORE INTO title (name) SELECT name FROM income_db.title;
 
         -- Then update income db's book title id references
         UPDATE income_db.vocabulary SET title_id = ifnull(

@@ -683,7 +683,7 @@ function CoverMenu:onCloseWidget()
     end)
     nb_drawings_since_last_collectgarbage = 0
 
-    -- Call the object's original onCloseWidget (i.e., Menu's, as none our our expected subclasses currently implement it)
+    -- Call original Menu:onCloseWidget (no subclass seems to override it)
     Menu.onCloseWidget(self)
 end
 

@@ -24,7 +24,6 @@ local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
 local Widget = require("ui/widget/widget")
-local datetime = require("datetime")
 local Input = Device.input
 local Screen = Device.screen
 local _ = require("gettext")
@@ -1013,6 +1012,9 @@ local MIN_MONTH = nil
 
 local CalendarView = FocusManager:extend{
     reader_statistics = nil,
+    monthTranslation = nil,
+    shortDayOfWeekTranslation = nil,
+    longDayOfWeekTranslation = nil,
     start_day_of_week = 2, -- 2 = Monday, 1-7 = Sunday-Saturday
     show_hourly_histogram = true,
     browse_future_months = false,
@@ -1023,7 +1025,8 @@ local CalendarView = FocusManager:extend{
     height = nil,
     cur_month = nil,
     weekdays = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" } -- in Lua wday order
-        -- (These do not need translations: they are the keys into the datetime module translations)
+        -- (These do not need translations: they are the key into the provided
+        -- self.shortDayOfWeekTranslation and self.longDayOfWeekTranslation)
 }
 
 function CalendarView:init()
@@ -1177,7 +1180,7 @@ function CalendarView:init()
     table.insert(self.day_names, HorizontalSpan:new{ width = self.outer_padding })
     for i = 0, 6 do
         local dayname = TextWidget:new{
-            text = datetime.shortDayOfWeekTranslation[self.weekdays[(self.start_day_of_week-1+i)%7 + 1]],
+            text = self.shortDayOfWeekTranslation[self.weekdays[(self.start_day_of_week-1+i)%7 + 1]],
             face = Font:getFace("xx_smallinfofont"),
             bold = true,
         }
@@ -1271,7 +1274,7 @@ function CalendarView:_populateItems()
         -- When hour is unspecified, Lua defaults to noon 12h00
     })
     -- Update title
-    local month_text = datetime.longMonthTranslation[os.date("%B", month_start_ts)] .. os.date(" %Y", month_start_ts)
+    local month_text = self.monthTranslation[os.date("%B", month_start_ts)] .. os.date(" %Y", month_start_ts)
     self.title_bar:setTitle(month_text)
     -- Update footer
     self.page_info_text:setText(self.cur_month)
@@ -1364,7 +1367,7 @@ function CalendarView:_populateItems()
                         local day = os.date("%Y-%m-%d", this.day_ts + 10800) -- use 3:00 to determine date (summer time change)
                         local date = os.date("*t", this.day_ts + 10800)
                         return string.format("%s (%s)", day,
-                            datetime.shortDayOfWeekToLongTranslation[self.weekdays[date.wday]])
+                            self.longDayOfWeekTranslation[self.weekdays[date.wday]])
                     end,
                     close_callback = function(this)
                         -- Refresh calendar in case some day stats were reset for some books

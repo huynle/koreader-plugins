@@ -15,7 +15,6 @@ local autostart_done = false
 
 local Profiles = WidgetContainer:extend{
     name = "profiles",
-    prefix = "profile_exec_",
     profiles_file = DataStorage:getSettingsDir() .. "/profiles.lua",
     profiles = nil,
     data = nil,
@@ -56,12 +55,12 @@ function Profiles:onFlushSettings()
 end
 
 local function dispatcherRegisterProfile(name)
-    Dispatcher:registerAction(Profiles.prefix..name,
+    Dispatcher:registerAction("profile_exec_"..name,
         {category="none", event="ProfileExecute", arg=name, title=T(_("Profile %1"), name), general=true})
 end
 
 local function dispatcherUnregisterProfile(name)
-    Dispatcher:removeAction(Profiles.prefix..name)
+    Dispatcher:removeAction("profile_exec_"..name)
 end
 
 function Profiles:onDispatcherRegisterActions()
@@ -145,8 +144,6 @@ function Profiles:getSubMenuItems()
                 callback = function(touchmenu_instance)
                     if v.settings.registered then
                         dispatcherUnregisterProfile(k)
-                        self:updateGestures(self.prefix..k)
-                        self:updateProfiles(self.prefix..k)
                         self.data[k].settings.registered = nil
                     else
                         dispatcherRegisterProfile(k)
@@ -155,8 +152,7 @@ function Profiles:getSubMenuItems()
                     self.updated = true
                     local actions_sub_menu = {}
                     Dispatcher:addSubMenu(self, actions_sub_menu, self.data, k)
-                    touchmenu_instance.item_table[5].sub_item_table = actions_sub_menu -- "Edit actions" submenu (item #5)
-                    touchmenu_instance.item_table_stack[#touchmenu_instance.item_table_stack] = self:getSubMenuItems()
+                    touchmenu_instance.item_table[4].sub_item_table = actions_sub_menu -- item index in submenu
                 end,
             },
             {
@@ -169,20 +165,17 @@ function Profiles:getSubMenuItems()
                 keep_menu_open = true,
                 callback = function(touchmenu_instance)
                     local function editCallback(new_name)
-                        self.data[new_name] = util.tableDeepCopy(v)
-                        self.data[new_name].settings.name = new_name
-                        self:updateAutostart(k, new_name)
                         if v.settings.registered then
                             dispatcherUnregisterProfile(k)
                             dispatcherRegisterProfile(new_name)
-                            self:updateGestures(self.prefix..k, self.prefix..new_name)
-                            self:updateProfiles(self.prefix..k, self.prefix..new_name)
                         end
+                        self:renameAutostart(k, new_name)
+                        self.data[new_name] = util.tableDeepCopy(v)
+                        self.data[new_name].settings.name = new_name
                         self.data[k] = nil
                         self.updated = true
                         touchmenu_instance.item_table = self:getSubMenuItems()
                         touchmenu_instance:updateItems()
-                        table.remove(touchmenu_instance.item_table_stack)
                       end
                     self:editProfileName(editCallback, k)
                 end,
@@ -194,13 +187,10 @@ function Profiles:getSubMenuItems()
                     local function editCallback(new_name)
                         self.data[new_name] = util.tableDeepCopy(v)
                         self.data[new_name].settings.name = new_name
-                        if v.settings.registered then
-                            dispatcherRegisterProfile(new_name)
-                        end
+                        self.data[new_name].settings.registered = nil
                         self.updated = true
                         touchmenu_instance.item_table = self:getSubMenuItems()
                         touchmenu_instance:updateItems()
-                        table.remove(touchmenu_instance.item_table_stack)
                       end
                     self:editProfileName(editCallback, k)
                 end,
@@ -214,17 +204,14 @@ function Profiles:getSubMenuItems()
                         text = _("Do you want to delete this profile?"),
                         ok_text = _("Delete"),
                         ok_callback = function()
-                            self:updateAutostart(k)
                             if v.settings.registered then
                                 dispatcherUnregisterProfile(k)
-                                self:updateGestures(self.prefix..k)
-                                self:updateProfiles(self.prefix..k)
                             end
+                            self:renameAutostart(k)
                             self.data[k] = nil
                             self.updated = true
                             touchmenu_instance.item_table = self:getSubMenuItems()
                             touchmenu_instance:updateItems()
-                            table.remove(touchmenu_instance.item_table_stack)
                         end,
                     })
                 end,
@@ -281,82 +268,7 @@ function Profiles:editProfileName(editCallback, old_name)
     name_input:onShowKeyboard()
 end
 
-function Profiles:updateGestures(action_old_name, action_new_name)
-    local gestures_path = FFIUtil.joinPath(DataStorage:getSettingsDir(), "gestures.lua")
-    local all_gestures = LuaSettings:open(gestures_path) -- in file
-    if not all_gestures then return end
-    local updated = false
-    for section, gestures in pairs(all_gestures.data) do -- custom_multiswipes, fm, reader sections
-        for gesture_name, gesture in pairs(gestures) do
-            if gesture[action_old_name] then
-                local gesture_loaded = self.ui.gestures.gestures[gesture_name] -- in memory
-                if gesture.settings and gesture.settings.order then
-                    for i, action in ipairs(gesture.settings.order) do
-                        if action == action_old_name then
-                            if action_new_name then
-                                gesture.settings.order[i] = action_new_name
-                                gesture_loaded.settings.order[i] = action_new_name
-                            else
-                                table.remove(gesture.settings.order, i)
-                                table.remove(gesture_loaded.settings.order, i)
-                                if #gesture.settings.order == 0 then
-                                    gesture.settings.order = nil
-                                    if #gesture.settings == 0 then
-                                        gesture.settings = nil
-                                    end
-                                end
-                            end
-                            break
-                        end
-                    end
-                end
-                gesture[action_old_name] = nil
-                gesture_loaded[action_old_name] = nil
-                if action_new_name then
-                    gesture[action_new_name] = true
-                    gesture_loaded[action_new_name] = true
-                else
-                    if #gesture == 0 then
-                        all_gestures.data[section][gesture_name] = nil
-                    end
-                end
-                updated = true
-            end
-        end
-    end
-    if updated then
-        all_gestures:flush()
-    end
-end
-
-function Profiles:updateProfiles(action_old_name, action_new_name)
-    for _, profile in pairs(self.data) do
-        if profile[action_old_name] then
-            if profile.settings and profile.settings.order then
-                for i, action in ipairs(profile.settings.order) do
-                    if action == action_old_name then
-                        if action_new_name then
-                            profile.settings.order[i] = action_new_name
-                        else
-                            table.remove(profile.settings.order, i)
-                            if #profile.settings.order == 0 then
-                                profile.settings.order = nil
-                            end
-                        end
-                        break
-                    end
-                end
-            end
-            profile[action_old_name] = nil
-            if action_new_name then
-                profile[action_new_name] = true
-            end
-            self.updated = true
-        end
-    end
-end
-
-function Profiles:updateAutostart(old_name, new_name)
+function Profiles:renameAutostart(old_name, new_name)
     if G_reader_settings:getSettingForExt("autostart_profiles", old_name) then
         G_reader_settings:saveSettingForExt("autostart_profiles", nil, old_name)
         if new_name then
@@ -375,7 +287,7 @@ function Profiles:executeAutostart()
                 Dispatcher:execute(self.data[autostart_profile_name])
             end)
         else
-            self:updateAutostart(autostart_profile_name) -- remove deleted profile from autostart_profile
+            self:renameAutostart(autostart_profile_name) -- remove deleted profile from autostart_profile
         end
     end
     autostart_done = true

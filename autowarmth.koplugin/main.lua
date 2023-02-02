@@ -27,7 +27,7 @@ local C_ = _.pgettext
 local Powerd = Device.powerd
 local T = FFIUtil.template
 local Screen = require("device").screen
-local datetime = require("datetime")
+local util = require("util")
 
 local activate_sun = 1
 local activate_schedule = 2
@@ -54,9 +54,8 @@ local AutoWarmth = WidgetContainer:extend{
 
 -- get timezone offset in hours (including dst)
 function AutoWarmth:getTimezoneOffset()
-    local now_ts = os.time()
-    local utcdate   = os.date("!*t", now_ts)
-    local localdate = os.date("*t", now_ts)
+    local utcdate   = os.date("!*t")
+    local localdate = os.date("*t")
     return os.difftime(os.time(localdate), os.time(utcdate)) * (1/3600)
 end
 
@@ -151,11 +150,9 @@ function AutoWarmth:leavePowerSavingState(from_resume)
     -- check if resume and suspend are done on the same day
     if resume_date.day == SunTime.date.day and resume_date.month == SunTime.date.month
         and resume_date.year == SunTime.date.year then
-
         local now_s = SunTime:getTimeInSec(resume_date)
-        self.sched_warmth_index = self.sched_warmth_index - 1 -- scheduleNextWarmth will check this
-        self:scheduleNextWarmthChange(from_resume)
-        self:scheduleToggleFrontlight(now_s) -- reset user toggles at sun set or sun rise
+        self:scheduleNextWarmthChange(now_s, self.sched_warmth_index > 1 and self.sched_warmth_index - 1 or 1, from_resume)
+        self:scheduleToggleFrontlight(now_s)
         self:toggleFrontlight(now_s)
         -- Reschedule 1sec after midnight
         UIManager:scheduleIn(24*3600 + 1 - now_s, self.scheduleMidnightUpdate, self)
@@ -185,7 +182,7 @@ AutoWarmth._onEnterStandby = AutoWarmth._onSuspend
 
 function AutoWarmth:_onToggleNightMode()
     logger.dbg("AutoWarmth: onToggleNightMode")
-    if not self.hide_nightmode_warning then
+    if self.control_nightmode and not self.hide_nightmode_warning then
         local RadioButtonWidget = require("ui/widget/radiobuttonwidget")
         local radio_buttons = {
             {{
@@ -221,8 +218,12 @@ end
 function AutoWarmth:_onToggleFrontlight()
     logger.dbg("AutoWarmth: onToggleFrontlight")
     local now_s = SunTime:getTimeInSec()
-    AutoWarmth.fl_turned_off = now_s >= self.current_times_h[5]*3600 + self.fl_off_during_day_offset_s and
-        now_s < self.current_times_h[7]*3600 - self.fl_off_during_day_offset_s
+    if now_s >= self.current_times_h[5]*3600 + self.fl_off_during_day_offset_s
+        and now_s < self.current_times_h[7]*3600 - self.fl_off_during_day_offset_s then
+        AutoWarmth.fl_turned_off = true
+    else
+        AutoWarmth.fl_turned_off = false
+    end
 end
 
 function AutoWarmth:setEventHandlers()
@@ -230,10 +231,8 @@ function AutoWarmth:setEventHandlers()
     self.onSuspend = self._onSuspend
     self.onEnterStandby = self._onEnterStandby
     self.onLeaveStandby = self._onLeaveStandby
-    if self.control_nightmode then
-        self.onToggleNightMode = self._onToggleNightMode
-        self.onSetNightMode = self._onToggleNightMode
-    end
+    self.onToggleNightMode = self._onToggleNightMode
+    self.onSetNightMode = self._onToggleNightMode
     if self.fl_off_during_day then
         self.onToggleFrontlight = self._onToggleFrontlight
     end
@@ -320,32 +319,30 @@ function AutoWarmth:scheduleMidnightUpdate(from_resume)
     end
 
     if self.easy_mode then
-        self.current_times_h[1] = nil   -- Solar midnight prev. day
-        self.current_times_h[2] = nil   -- Astronomical dawn
-        self.current_times_h[3] = nil   -- Nautical dawn
-        self.current_times_h[6] = nil   -- Solar noon
-        self.current_times_h[9] = nil   -- Nautical dust
-        self.current_times_h[10] = nil  -- Astronomical dust
-        self.current_times_h[11] = nil  -- Solar midnight
+        self.current_times_h[1] = nil
+        self.current_times_h[2] = nil
+        self.current_times_h[3] = nil
+        self.current_times_h[6] = nil
+        self.current_times_h[9] = nil
+        self.current_times_h[10] = nil
+        self.current_times_h[11] = nil
     end
 
     -- here are dragons
-    local prev_index = 1
-    -- find first valid entry (~= nil)
-    while not self.current_times_h[prev_index] and prev_index <= midnight_index do
-        prev_index = prev_index + 1
+    local i = 1
+    -- find first valid entry
+    while not self.current_times_h[i] and i <= midnight_index do
+        i = i + 1
     end
-    local next_index
-    while prev_index <= midnight_index do
-        next_index = prev_index + 1
-        -- find next valid entry (~= nil)
-        while not self.current_times_h[next_index] and next_index <= midnight_index do
-            next_index = next_index + 1
+    local next
+    while i <= midnight_index do
+        next = i + 1
+        -- find next valid entry
+        while not self.current_times_h[next] and next <= midnight_index do
+            next = next + 1
         end
-        -- now we have two valid indices: prev_index and next_index
-        prepareSchedule(self.current_times_h, prev_index, next_index)
-        -- move on prev_index to the next valid entry
-        prev_index = next_index
+        prepareSchedule(self.current_times_h, i, next)
+        i = next
     end
 
     local now_s = SunTime:getTimeInSec()
@@ -355,11 +352,10 @@ function AutoWarmth:scheduleMidnightUpdate(from_resume)
 
     -- set event handlers
     if self.activate ~= 0 then
-        self:setEventHandlers()
         -- Schedule the first warmth change
-        self.sched_warmth_index = 1
-        self:scheduleNextWarmthChange(from_resume)
-        self:scheduleToggleFrontlight(now_s) -- reset user toggles at sun set or sun rise
+        self:setEventHandlers()
+        self:scheduleNextWarmthChange(now_s, 1, from_resume)
+        self:scheduleToggleFrontlight(now_s)
         self:toggleFrontlight(now_s)
     else
         self:clearEventHandlers()
@@ -368,9 +364,6 @@ end
 
 function AutoWarmth:scheduleToggleFrontlight(now_s)
     logger.dbg("AutoWarmth: scheduleToggleFrontlight")
-
-    UIManager:unschedule(self.setFrontlight)
-
     if not self.fl_off_during_day then
         return
     end
@@ -440,78 +433,84 @@ end
 -- schedules the next warmth change
 -- search_pos ... start searching from that index
 -- from_resume ... true if first call after resume
-function AutoWarmth:scheduleNextWarmthChange(from_resume)
+function AutoWarmth:scheduleNextWarmthChange(time_s, search_pos, from_resume)
     logger.dbg("AutoWarmth: scheduleNextWarmthChange")
-    UIManager:unschedule(self.scheduleNextWarmthChange)
+    UIManager:unschedule(self.setWarmth)
 
-    if self.activate == 0 or #self.sched_warmths == 0 then
+    if self.activate == 0 or #self.sched_warmths == 0 or search_pos > #self.sched_warmths then
         return
     end
 
-    if self.sched_warmth_index < 1 then
-        self.sched_warmth_index = 1
-    end
+    self.sched_warmth_index = search_pos or 1
 
-    -- `warmth_now` is the value which should be applied now.
-    -- `warmth_in_1p5_s` is valid `1.5` seconds after now for resume on some devices (KA1)
-    -- Most of the times this will be the same as `warmth_now`.
+    -- `actual_warmth` is the value which should be applied now.
+    -- `next_warmth` is valid `delay_s` seconds after now for resume on some devices (KA1)
+    -- Most of the times this will be the same as `actual_warmth`.
     -- We need both, as we could have a very rapid change in warmth (depending on user settings)
     -- or by chance a change in warmth very shortly after (a few ms) resume time.
-    -- Use the last (== solar midnight) warmth value, so that we have a valid value when resuming
-    -- before 24:00:00 but after true midnight. OK, this value is actually not quite the right one,
-    -- as it is calculated for the current day (and not the previous one), but this is for a corner case
+    local delay_s = 1.5
+    -- Use the last warmth value, so that we have a valid value when resuming after 24:00 but
+    -- before true midnight. OK, this value is actually not quite the right one, as it is calculated
+    -- for the current day (and not the previous one), but this is for a corner case
     -- and the error is small.
-    local warmth_now = self.sched_warmths[self.sched_warmth_index]
-    local warmth_in_1p5_s = warmth_now
-    local now_s = SunTime:getTimeInSec()
-    while self.sched_warmth_index <= #self.sched_warmths do
-        if self.sched_times_s[self.sched_warmth_index] > now_s then
+    local actual_warmth = self.sched_warmths[self.sched_warmth_index]
+    local next_warmth = actual_warmth
+    for i = self.sched_warmth_index, #self.sched_warmths do
+        -- It might be possible that actual_warmth == self.sched_warmth[#self.sched_warmths]
+        -- in this case next self.sched_warmth_index should be #self.sched_warmths
+        self.sched_warmth_index = i
+
+        if self.sched_times_s[i] > time_s then
             break
         end
 
-        -- update warmth_now
-        warmth_now = self.sched_warmths[self.sched_warmth_index]
-        local j = self.sched_warmth_index
-        if from_resume then
-            -- update warmth_in_1p5_s
-            while j <= #self.sched_warmths and self.sched_times_s[j] <= now_s + 1.5 do
-                -- Most times only one iteration through this loop
-                warmth_in_1p5_s = self.sched_warmths[j]
-                j = j + 1
-            end
+        -- update actual_warmth and next_warmth
+        actual_warmth = self.sched_warmths[i]
+        local j = i
+        while from_resume and j <= #self.sched_warmths and self.sched_times_s[j] <= time_s + delay_s do
+            -- Most times only one iteration through this loop
+            next_warmth = self.sched_warmths[j]
+            j = j + 1
         end
-        -- It might be possible that self.sched_warmth_index gets > #self.sched_warmths
-        self.sched_warmth_index = self.sched_warmth_index + 1
     end
 
     -- update current warmth immediately
-    self:setWarmth(warmth_now, from_resume) -- force warmth, when from_resume
-
-    if self.sched_warmth_index <= #self.sched_warmths then -- and only then, schedule next warmth change
-        local next_sched_time_s = self.sched_times_s[self.sched_warmth_index] - now_s
-        UIManager:scheduleIn(next_sched_time_s, self.scheduleNextWarmthChange, self, false) -- no force warmth
+    self:setWarmth(actual_warmth, false) -- no setWarmth rescheduling, don't force warmth
+    local next_sched_time_s = self.sched_times_s[self.sched_warmth_index] - time_s
+    if next_sched_time_s <= 0 then
+        -- If this really happens under strange conditions (after the last scheduler entry
+        -- (true midnight) and before 00:00),
+        -- wait until the next full minute to minimize wakeups from standby.
+        next_sched_time_s = 61 - tonumber(os.date("%S"))
     end
+    -- This setWarmth will call scheduleNextWarmthChange which will schedule setWarmth again.
+    UIManager:scheduleIn(next_sched_time_s,
+        self.setWarmth, self, self.sched_warmths[self.sched_warmth_index], true)
 
     if from_resume then
         -- On some strange devices like KA1 setWarmth doesn't work right after a resume so
-        -- schedule setting of another valid warmth (=`warmth_in_1p5_s`) again (one time) in 1.5s.
+        -- schedule setting of another valid warmth (=`next_warmth`) again (one time).
         -- On sane devices this schedule does no harm.
         -- see https://github.com/koreader/koreader/issues/8363
-        UIManager:scheduleIn(1.5, self.setWarmth, self, warmth_in_1p5_s, true) -- force warmth one time
+        UIManager:scheduleIn(delay_s, self.setWarmth, self, next_warmth, false) -- no setWarmth rescheduling, force warmth
     end
 end
 
 -- Set warmth and schedule the next warmth change
-function AutoWarmth:setWarmth(val, force_warmth)
+function AutoWarmth:setWarmth(val, schedule_next, force_warmth)
     if val then
         if self.control_nightmode then
             DeviceListener:onSetNightMode(val > 100)
         end
 
-        if self.control_warmth and Device:hasNaturalLight() then
+        if Device:hasNaturalLight() and self.control_warmth then
             val = math.min(val, 100) -- "mask" night mode
             Powerd:setWarmth(val, force_warmth)
         end
+    end
+    if schedule_next then
+        local now_s = SunTime:getTimeInSec()
+        self:scheduleNextWarmthChange(now_s, self.sched_warmth_index, false)
     end
 end
 
@@ -519,14 +518,16 @@ function AutoWarmth:hoursToClock(hours)
     if hours then
         hours = hours % 24 * 3600 + 0.01 -- round up, due to reduced precision in settings.reader.lua
     end
-    return datetime.secondsToClock(hours, self.easy_mode)
+    return util.secondsToClock(hours, self.easy_mode)
 end
 
 function AutoWarmth:addToMainMenu(menu_items)
     menu_items.autowarmth = {
         text = Device:hasNaturalLight() and _("Auto warmth and night mode") or _("Auto night mode"),
         checked_func = function() return self.activate ~= 0 end,
-        sub_item_table = self:getSubMenuItems(),
+        sub_item_table_func = function()
+            return self:getSubMenuItems()
+        end,
     }
 end
 
@@ -534,7 +535,7 @@ local function tidy_menu(menu, request)
     for i = #menu, 1, -1 do
         if menu[i].mode ~=nil then
             if menu[i].mode ~= request then
-                table.remove(menu, i)
+                table.remove(menu,i)
             else
                 menu[i].mode = nil
             end
@@ -1042,7 +1043,7 @@ function AutoWarmth:getWarmthMenu()
             text_func = function()
                 if Device:hasNaturalLight() then
                     return T(_("Control: %1%2%3"), self.control_warmth and _("warmth") or "",
-                            self.control_warmth and self.control_nightmode and T(" %1 ", _("and")) or "",
+                            self.control_warmth and self.control_nightmode and string.format(" %s ", _("and")) or "",
                             self.control_nightmode and _("night mode") or "")
                 else
                     return _("Control: night mode")
@@ -1074,7 +1075,7 @@ function AutoWarmth:getWarmthMenu()
         },
         {
             text = Device:hasNaturalLight() and _("Set warmth and night mode for:") or _("Set night mode for:"),
-            enabled = false,
+            enabled_func = function() return false end,
         },
         getWarmthMenuEntry(_("Solar noon"), 6, false),
         getWarmthMenuEntry(_("Sunset and sunrise"), 5),
@@ -1143,7 +1144,7 @@ function AutoWarmth:showTimesInfo(title, location, activator, request_easy)
         elseif Device:hasNaturalLight() and self.control_warmth then
             if self.current_times_h[num] == time then
                 if self.warmth[num] <= 100 then
-                    return retval .. " (💡" .. self.warmth[num] .. "%)\n"
+                    return retval .. " (💡" .. self.warmth[num] .."%)\n"
                 else
                     return retval .. " (💡100%" .. (self.control_nightmode and " + ☾" or "") .. ")\n"
                 end
@@ -1199,7 +1200,8 @@ function AutoWarmth:showTimesInfo(title, location, activator, request_easy)
             -- add fl toggle
             add_line(0, "", not self.fl_off_during_day) ..
             add_line(0, _("Toggle frontlight off between"), not self.fl_off_during_day) ..
-            add_line(4, T(_("%1 and %2"),
+            add_line(4,
+                string.format(_("%s and %s"),
                         self:hoursToClock(times[5] + self.fl_off_during_day_offset_s * (1/3600)),
                         self:hoursToClock(times[7] - self.fl_off_during_day_offset_s * (1/3600))),
                     not self.fl_off_during_day),

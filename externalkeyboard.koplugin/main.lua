@@ -368,7 +368,9 @@ end)
 
 function ExternalKeyboard:showHelp()
     UIManager:show(InfoMessage:new {
-        text = _("Note that in OTG mode the device will not be recognized as a USB drive by a computer."),
+        text = _([[
+Note that in the OTG mode the device would not be recognized as a USB drive by a computer.
+]]),
     })
 end
 
